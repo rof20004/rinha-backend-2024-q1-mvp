@@ -4,25 +4,13 @@ import (
 	"database/sql"
 	"errors"
 	"log"
-	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 )
 
-type Cliente struct {
-	Id     int64
-	Saldo  int64
-	Limite int64
-}
-
 func criarTransacao(c *fiber.Ctx) error {
-	id := c.Params("id")
-	clienteId, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
-	}
-
 	var req CriarTransacaoRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.SendStatus(fiber.StatusUnprocessableEntity)
@@ -40,40 +28,41 @@ func criarTransacao(c *fiber.Ctx) error {
 
 	defer tx.Rollback(c.Context())
 
-	_, err = tx.Exec(c.Context(), "SELECT pg_advisory_xact_lock($1)", clienteId)
-	if err != nil {
-		log.Println("erro ao adquirir lock:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
+	var (
+		id        = c.Params("id")
+		tipo      = req.Tipo
+		valor     = req.Valor
+		descricao = req.Descricao
+		limite    int64
+		saldo     int64
+	)
 
-	var cliente Cliente
-	err = tx.QueryRow(c.Context(), queryCliente, clienteId).Scan(&cliente.Id, &cliente.Limite, &cliente.Saldo)
+	err = tx.QueryRow(c.Context(), queryClienteLimiteAndSaldoForUpdate, id).Scan(&limite, &saldo)
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
 	if err != nil {
-		log.Println("erro ao recuperar dados do cliente:", err)
+		log.Println("erro ao recuperar limite e saldo do cliente:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	if req.Tipo == "c" {
-		cliente.Saldo += req.Valor
-	} else {
-		cliente.Saldo -= req.Valor
+	novoSaldo := valor
+	if req.Tipo == "d" {
+		if (saldo - valor) < -limite {
+			return c.SendStatus(fiber.StatusUnprocessableEntity)
+		}
+
+		novoSaldo = -valor
 	}
 
-	if (cliente.Saldo + cliente.Limite) < 0 {
-		return c.SendStatus(fiber.StatusUnprocessableEntity)
-	}
-
-	_, err = tx.Exec(c.Context(), queryCriarTransacao, cliente.Id, req.Tipo, req.Valor, req.Descricao)
+	_, err = tx.Exec(c.Context(), queryCriarTransacao, id, tipo, valor, descricao)
 	if err != nil {
 		log.Println("erro ao registrar transação:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	_, err = tx.Exec(c.Context(), queryAtualizarSaldoCliente, cliente.Saldo, cliente.Id)
+	_, err = tx.Exec(c.Context(), queryAtualizarSaldo, novoSaldo, id)
 	if err != nil {
 		log.Println("erro ao atualizar saldo do cliente:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -84,38 +73,29 @@ func criarTransacao(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(CriarTransacaoResponse{
-		Saldo:  cliente.Saldo,
-		Limite: cliente.Limite,
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"saldo":  saldo,
+		"limite": limite,
 	})
 }
 
 func extrato(c *fiber.Ctx) error {
-	id := c.Params("id")
-	clienteId, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
-		return c.SendStatus(fiber.StatusNotFound)
-	}
-
-	var cliente Cliente
-	err = db.QueryRow(c.Context(), queryCliente, clienteId).Scan(&cliente.Id, &cliente.Limite, &cliente.Saldo)
+	var (
+		id     = c.Params("id")
+		limite int64
+		saldo  int64
+	)
+	err := db.QueryRow(c.Context(), queryClienteLimiteAndSaldo, id).Scan(&limite, &saldo)
 	if err != nil && errors.Is(err, pgx.ErrNoRows) {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
 	if err != nil {
-		log.Println("erro ao recuperar dados do cliente:", err)
+		log.Println("erro ao recuperar limite e saldo do cliente:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	var saldo Saldo
-	err = db.QueryRow(c.Context(), querySaldoExtrato, cliente.Id).Scan(&saldo.Total, &saldo.Limite, &saldo.DataExtrato)
-	if err != nil {
-		log.Println("erro ao recuperar informações do saldo:", err)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-
-	rows, err := db.Query(c.Context(), queryTransacoesExtrato, cliente.Id)
+	rows, err := db.Query(c.Context(), queryTransacoesExtrato, id)
 	if err != nil {
 		log.Println("erro ao recuperar informações das transações:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -149,8 +129,12 @@ func extrato(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(ExtratoResponse{
-		Saldo:             saldo,
-		UltimasTransacoes: transacoes,
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"saldo": Saldo{
+			Total:       saldo,
+			DataExtrato: time.Now(),
+			Limite:      limite,
+		},
+		"ultimas_transacoes": transacoes,
 	})
 }
