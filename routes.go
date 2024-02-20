@@ -48,7 +48,7 @@ func criarTransacao(c *fiber.Ctx) error {
 	}
 
 	novoSaldo := valor
-	if req.Tipo == "d" {
+	if tipo == "d" {
 		if (saldo - valor) < -limite {
 			return c.SendStatus(fiber.StatusUnprocessableEntity)
 		}
