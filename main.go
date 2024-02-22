@@ -9,9 +9,11 @@ import (
 
 func main() {
 	app := fiber.New(fiber.Config{
-		Prefork:     true,
-		JSONEncoder: json.Marshal,
-		JSONDecoder: json.Unmarshal,
+		Prefork:                  true,
+		JSONEncoder:              json.Marshal,
+		JSONDecoder:              json.Unmarshal,
+		DisableDefaultDate:       true,
+		DisableHeaderNormalizing: true,
 	})
 	app.Post("/clientes/:id/transacoes", criarTransacao)
 	app.Get("/clientes/:id/extrato", extrato)
