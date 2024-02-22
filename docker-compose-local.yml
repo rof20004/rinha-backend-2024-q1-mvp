@@ -21,6 +21,7 @@ services:
           memory: "20MB"
 
   api1: &api
+    pid: host
     build:
       context: .
       dockerfile: Dockerfile

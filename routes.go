@@ -16,7 +16,14 @@ func criarTransacao(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusUnprocessableEntity)
 	}
 
-	if !req.isValid() {
+	var (
+		id        = c.Params("id")
+		tipo      = req.Tipo
+		valor     = req.Valor
+		descricao = req.Descricao
+	)
+
+	if (valor <= 0) || (tipo != "c" && tipo != "d") || (len(descricao) < 1 || len(descricao) > 10) {
 		return c.SendStatus(fiber.StatusUnprocessableEntity)
 	}
 
@@ -29,12 +36,8 @@ func criarTransacao(c *fiber.Ctx) error {
 	defer tx.Rollback(c.Context())
 
 	var (
-		id        = c.Params("id")
-		tipo      = req.Tipo
-		valor     = req.Valor
-		descricao = req.Descricao
-		limite    int64
-		saldo     int64
+		limite int64
+		saldo  int64
 	)
 
 	err = tx.QueryRow(c.Context(), queryClienteLimiteAndSaldoForUpdate, id).Scan(&limite, &saldo)
@@ -70,6 +73,7 @@ func criarTransacao(c *fiber.Ctx) error {
 
 	err = tx.Commit(c.Context())
 	if err != nil {
+		log.Println("erro ao commitar transação:", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 

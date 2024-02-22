@@ -9,6 +9,7 @@ import (
 
 func main() {
 	app := fiber.New(fiber.Config{
+		Prefork:     true,
 		JSONEncoder: json.Marshal,
 		JSONDecoder: json.Unmarshal,
 	})
